@@ -345,9 +345,9 @@ export async function convertFile(
     const password = options?.password || 'password';
     await runCommand('qpdf', [
       '--encrypt',
-      `--user-password=${password}`,
-      `--owner-password=${password}`,
-      '--bits=256',
+      password,
+      password,
+      '256',
       '--',
       firstInput,
       outputPath
