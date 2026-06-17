@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
     graphicsmagick \
     curl \
     qpdf \
+    fonts-liberation \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

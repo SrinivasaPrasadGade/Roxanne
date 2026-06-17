@@ -41,14 +41,15 @@ function scheduleCleanup(filePath: string): void {
 
 function runCommand(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
+    let stderr = '';
     const controller = new AbortController();
     const timer = setTimeout(() => {
       controller.abort();
+      console.error(`[Timeout] Command ${cmd} timed out after ${CONVERSION_TIMEOUT_MS}ms. Stderr:`, stderr);
       reject(new TimeoutError(CONVERSION_TIMEOUT_MS));
     }, CONVERSION_TIMEOUT_MS);
 
     const proc = spawn(cmd, args, { signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
     
     if (proc.stdout) {
       proc.stdout.on('data', () => {}); // Consume stdout
