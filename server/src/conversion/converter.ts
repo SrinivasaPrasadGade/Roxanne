@@ -2,8 +2,9 @@ import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { v4 as uuidv4 } from 'uuid';
-import { fromPath } from 'pdf2pic';
 import archiver from 'archiver';
+import sharp from 'sharp';
+import { PDFDocument, rgb, degrees } from 'pdf-lib';
 import type { SupportedFormat } from '../../../shared/types';
 import {
   ConversionError,
@@ -11,39 +12,34 @@ import {
   UnsupportedConversionError,
 } from './errors';
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
 const OUTPUTS_DIR = '/tmp/outputs';
-const CONVERSION_TIMEOUT_MS = 60_000; // 60 seconds
-const OUTPUT_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CONVERSION_TIMEOUT_MS = 180_000; // 3 minutes
+const OUTPUT_TTL_MS = 60 * 60 * 1000;
 
-/** Formats that LibreOffice can convert *to* a given target. */
 const LIBREOFFICE_MATRIX: Record<string, Set<string>> = {
   pdf: new Set(['docx', 'pptx', 'xlsx', 'jpg', 'png', 'pdf']),
   docx: new Set(['pdf']),
-  pptx: new Set(['docx']),
+  pptx: new Set(['pdf']),
+  xlsx: new Set(['pdf']),
 };
 
-/** Source formats where pdf2pic should be used (PDF → image). */
 const PDF2PIC_TARGETS = new Set<string>(['jpg']);
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Detect the source format from a file extension. */
 function detectFormat(filePath: string): string {
+  if (filePath === 'batch') return 'batch';
   const ext = path.extname(filePath).toLowerCase().replace('.', '');
   return ext === 'jpeg' ? 'jpg' : ext;
 }
 
-/**
- * Spawn LibreOffice headless and wait for it to finish.
- * Rejects with ConversionError (non-zero exit) or TimeoutError.
- */
-function runLibreOffice(
-  inputPath: string,
-  targetFormat: string,
-  outDir: string
-): Promise<void> {
+function scheduleCleanup(filePath: string): void {
+  setTimeout(() => {
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (err) {}
+  }, OUTPUT_TTL_MS).unref();
+}
+
+function runCommand(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const controller = new AbortController();
     const timer = setTimeout(() => {
@@ -51,255 +47,353 @@ function runLibreOffice(
       reject(new TimeoutError(CONVERSION_TIMEOUT_MS));
     }, CONVERSION_TIMEOUT_MS);
 
-    // Determine the correct LibreOffice binary name
-    const soffice = process.platform === 'darwin' ? '/Applications/LibreOffice.app/Contents/MacOS/soffice' : 'libreoffice';
-
-    let convertFormat = targetFormat;
-    let infilter: string | undefined;
-
-    if (inputPath.toLowerCase().endsWith('.pdf')) {
-      if (targetFormat === 'docx') {
-        convertFormat = 'docx:MS Word 2007 XML';
-        infilter = 'writer_pdf_import';
-      } else if (targetFormat === 'pptx') {
-        convertFormat = 'pptx:Impress MS PowerPoint 2007 XML';
-        infilter = 'impress_pdf_import';
-      }
-    }
-
-    const args = [
-      '--headless',
-      '--convert-to',
-      convertFormat,
-      '--outdir',
-      outDir,
-    ];
-    if (infilter) {
-      args.push('--infilter=' + infilter);
-    }
-    args.push(inputPath);
-
-    const proc = spawn(soffice, args, { signal: controller.signal });
-
+    const proc = spawn(cmd, args, { signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
-    proc.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString();
+    
+    if (proc.stdout) {
+      proc.stdout.on('data', () => {}); // Consume stdout
+    }
+    
+    if (proc.stderr) {
+      proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    }
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      if (err.name === 'AbortError') return;
+      reject(new ConversionError(`Failed to start ${cmd}: ${err.message}`, -1, stderr));
     });
 
-    proc.on('error', (err: NodeJS.ErrnoException) => {
+    proc.on('exit', (code) => {
       clearTimeout(timer);
-      if (err.name === 'AbortError') return; // handled by timer
-      reject(
-        new ConversionError(
-          `Failed to start LibreOffice: ${err.message}`,
-          -1,
-          stderr
-        )
-      );
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(
-          new ConversionError(
-            `LibreOffice exited with code ${code}`,
-            code ?? -1,
-            stderr
-          )
-        );
-      } else {
-        resolve();
-      }
+      if (code !== 0) reject(new ConversionError(`${cmd} exited with code ${code}`, code ?? -1, stderr));
+      else resolve();
     });
   });
 }
 
-/**
- * After LibreOffice finishes, it names the output based on the input filename.
- * Find and rename it to our UUID-based output path.
- */
-function renameLibreOfficeOutput(
-  inputPath: string,
-  targetFormat: string,
-  finalOutputPath: string
-): void {
-  const inputBasename = path.basename(
-    inputPath,
-    path.extname(inputPath)
-  );
-  const defaultName = `${inputBasename}.${targetFormat}`;
-  const defaultPath = path.join(OUTPUTS_DIR, defaultName);
+function runLibreOffice(inputPath: string, targetFormat: string, outDir: string): Promise<void> {
+  const soffice = process.platform === 'darwin' ? '/Applications/LibreOffice.app/Contents/MacOS/soffice' : 'libreoffice';
+  let convertFormat = targetFormat;
+  let infilter: string | undefined;
 
-  if (fs.existsSync(defaultPath)) {
-    fs.renameSync(defaultPath, finalOutputPath);
-  } else {
-    // Sometimes LibreOffice puts it in the same directory as input
-    const altPath = path.join(path.dirname(inputPath), defaultName);
-    if (fs.existsSync(altPath)) {
-      fs.renameSync(altPath, finalOutputPath);
-    } else {
-      throw new ConversionError(
-        `LibreOffice completed but output file not found. Expected: ${defaultPath}`,
-        0,
-        ''
-      );
+  if (inputPath.toLowerCase().endsWith('.pdf')) {
+    if (targetFormat === 'docx') { convertFormat = 'docx:MS Word 2007 XML'; infilter = 'writer_pdf_import'; }
+    else if (targetFormat === 'pptx') { convertFormat = 'pptx:Impress MS PowerPoint 2007 XML'; infilter = 'impress_pdf_import'; }
+    else if (targetFormat === 'xlsx') { convertFormat = 'xlsx:Calc MS Excel 2007 XML'; infilter = 'calc_pdf_import'; }
+  }
+
+  const profileDir = path.join('/tmp', `lo_profile_${uuidv4()}`);
+  const args = [
+    `-env:UserInstallation=file://${profileDir}`,
+    '--headless',
+    '--nologo',
+    '--norestore',
+    '--nofirststartwizard',
+    '--convert-to',
+    convertFormat,
+    '--outdir',
+    outDir
+  ];
+  
+  if (infilter) args.push('--infilter=' + infilter);
+  args.push(inputPath);
+
+  return runCommand(soffice, args).finally(() => {
+    // Cleanup isolated user profile
+    try {
+      if (fs.existsSync(profileDir)) {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.warn(`Failed to cleanup LO profile at ${profileDir}`, err);
     }
+  });
+}
+
+function renameLibreOfficeOutput(inputPath: string, targetFormat: string, finalOutputPath: string): void {
+  const defaultName = `${path.basename(inputPath, path.extname(inputPath))}.${targetFormat}`;
+  const defaultPath = path.join(OUTPUTS_DIR, defaultName);
+  if (fs.existsSync(defaultPath)) fs.renameSync(defaultPath, finalOutputPath);
+  else {
+    const altPath = path.join(path.dirname(inputPath), defaultName);
+    if (fs.existsSync(altPath)) fs.renameSync(altPath, finalOutputPath);
+    else throw new ConversionError(`LibreOffice output not found.`, 0, '');
   }
 }
 
-/**
- * Convert PDF pages to JPG images at 150 DPI, then bundle them
- * into a single ZIP archive so the caller gets one output file.
- */
-async function convertPdfToJpg(
-  inputPath: string,
-  outputPath: string
-): Promise<void> {
-  const options = {
-    density: 150,
-    saveFilename: 'page',
-    savePath: path.dirname(outputPath),
-    format: 'jpg' as const,
-    width: 1200,
-    height: 1600,
-  };
+async function convertPdfToJpg(inputPath: string, outputPath: string): Promise<void> {
+  // Dynamic import for ESM-only pdf-to-img
+  const { pdf } = await import('pdf-to-img');
+  const pdfBuffer = fs.readFileSync(inputPath);
+  const document = await pdf(pdfBuffer, { scale: 2 });
 
-  const converter = fromPath(inputPath, options);
-
-  // Determine page count by trying bulk conversion
-  // pdf2pic exposes a .bulk() method that converts all pages
-  const results = await converter.bulk(-1, { responseType: 'image' });
-
-  if (!Array.isArray(results) || results.length === 0) {
-    throw new ConversionError('pdf2pic produced no output pages', -1, '');
+  const jpgBuffers: Buffer[] = [];
+  for await (const pngPage of document) {
+    // Convert PNG buffer to JPG using sharp
+    const jpgBuffer = await sharp(pngPage)
+      .jpeg({ quality: 90 })
+      .toBuffer();
+    jpgBuffers.push(jpgBuffer);
   }
 
-  // If single page, just rename the output
-  if (results.length === 1) {
-    const singlePagePath = results[0].path;
-    if (singlePagePath && fs.existsSync(singlePagePath)) {
-      // Change output extension to .jpg for single page
-      const jpgOutputPath = outputPath.replace(/\.[^.]+$/, '.jpg');
-      fs.renameSync(singlePagePath, jpgOutputPath);
-      // Update outputPath reference — caller will use the returned path
-      return;
-    }
-    throw new ConversionError('pdf2pic output file not found', -1, '');
+  // Clean up the pdf document
+  if (typeof document.destroy === 'function') {
+    await document.destroy();
   }
 
-  // Multiple pages → ZIP them
+  if (jpgBuffers.length === 0) {
+    throw new ConversionError('PDF to JPG conversion produced no output', -1, '');
+  }
+
+  if (jpgBuffers.length === 1) {
+    // Single page → output a single JPG file
+    const singlePath = outputPath.replace(/\.[^.]+$/, '.jpg');
+    fs.writeFileSync(singlePath, jpgBuffers[0]);
+    return;
+  }
+
+  // Multiple pages → create a ZIP of JPGs
   const zipPath = outputPath.replace(/\.[^.]+$/, '.zip');
   await new Promise<void>((resolve, reject) => {
     const output = fs.createWriteStream(zipPath);
     const archive = archiver('zip', { zlib: { level: 6 } });
-
     output.on('close', resolve);
     archive.on('error', reject);
-
     archive.pipe(output);
-
-    for (const result of results) {
-      if (result.path && fs.existsSync(result.path)) {
-        archive.file(result.path, { name: path.basename(result.path) });
-      }
+    for (let i = 0; i < jpgBuffers.length; i++) {
+      archive.append(jpgBuffers[i], { name: `page-${i + 1}.jpg` });
     }
-
     archive.finalize();
   });
+}
 
-  // Clean up individual page files
-  for (const result of results) {
-    if (result.path && fs.existsSync(result.path)) {
-      fs.unlinkSync(result.path);
+async function mergePdf(inputPaths: string[], outputPath: string): Promise<void> {
+  const mergedPdf = await PDFDocument.create();
+  for (const p of inputPaths) {
+    const pdfBytes = fs.readFileSync(p);
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    const copiedPages = await mergedPdf.copyPages(pdfDoc, pdfDoc.getPageIndices());
+    copiedPages.forEach((page) => mergedPdf.addPage(page));
+  }
+  const mergedBytes = await mergedPdf.save();
+  fs.writeFileSync(outputPath, mergedBytes);
+}
+
+async function splitPdf(inputPath: string, outputPath: string): Promise<void> {
+  const pdfBytes = fs.readFileSync(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const numPages = pdfDoc.getPageCount();
+
+  const zipPath = outputPath.replace(/\.[^.]+$/, '.zip');
+  await new Promise<void>(async (resolve, reject) => {
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    output.on('close', resolve);
+    archive.on('error', reject);
+    archive.pipe(output);
+
+    for (let i = 0; i < numPages; i++) {
+      const newDoc = await PDFDocument.create();
+      const [copiedPage] = await newDoc.copyPages(pdfDoc, [i]);
+      newDoc.addPage(copiedPage);
+      const newBytes = await newDoc.save();
+      archive.append(Buffer.from(newBytes), { name: `page-${i + 1}.pdf` });
+    }
+    archive.finalize();
+  });
+}
+
+async function rotatePdf(
+  inputPath: string,
+  outputPath: string,
+  options?: { degrees?: number; pages?: string }
+): Promise<void> {
+  const pdfBytes = fs.readFileSync(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const pages = pdfDoc.getPages();
+  const pageCount = pages.length;
+
+  const rotateDegrees = options?.degrees !== undefined ? options.degrees : 90;
+  const pageOption = options?.pages || 'all';
+
+  const targetIndices = new Set<number>();
+  if (pageOption === 'all') {
+    for (let i = 0; i < pageCount; i++) {
+      targetIndices.add(i);
+    }
+  } else {
+    const parts = pageOption.split(',');
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.includes('-')) {
+        const [startStr, endStr] = trimmed.split('-');
+        const start = parseInt(startStr, 10);
+        const end = parseInt(endStr, 10);
+        if (!isNaN(start) && !isNaN(end)) {
+          const lower = Math.min(start, end);
+          const upper = Math.max(start, end);
+          for (let i = lower; i <= upper; i++) {
+            if (i >= 1 && i <= pageCount) {
+              targetIndices.add(i - 1);
+            }
+          }
+        }
+      } else {
+        const pageNum = parseInt(trimmed, 10);
+        if (!isNaN(pageNum) && pageNum >= 1 && pageNum <= pageCount) {
+          targetIndices.add(pageNum - 1);
+        }
+      }
     }
   }
-}
 
-/**
- * Schedule deletion of the output file after the TTL expires.
- */
-function scheduleCleanup(filePath: string): void {
-  setTimeout(() => {
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`[cleanup] Deleted expired output: ${filePath}`);
-      }
-    } catch (err) {
-      console.error(`[cleanup] Failed to delete ${filePath}:`, err);
+  pages.forEach((page, index) => {
+    if (targetIndices.has(index)) {
+      const currentRot = page.getRotation().angle;
+      page.setRotation(degrees(currentRot + rotateDegrees));
     }
-  }, OUTPUT_TTL_MS).unref(); // .unref() so timer doesn't keep process alive
+  });
+
+  const newBytes = await pdfDoc.save();
+  fs.writeFileSync(outputPath, newBytes);
 }
 
-// ── Public API ───────────────────────────────────────────────────────────────
+async function watermarkPdf(inputPath: string, outputPath: string): Promise<void> {
+  const pdfBytes = fs.readFileSync(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const pages = pdfDoc.getPages();
+  pages.forEach(page => {
+    const { width, height } = page.getSize();
+    page.drawText('CONFIDENTIAL', {
+      x: width / 2 - 150,
+      y: height / 2,
+      size: 50,
+      color: rgb(0.95, 0.1, 0.1),
+      opacity: 0.3,
+      rotate: degrees(45),
+    });
+  });
+  const newBytes = await pdfDoc.save();
+  fs.writeFileSync(outputPath, newBytes);
+}
 
-/**
- * Convert a file from its current format to the requested target format.
- *
- * @param inputPath    Absolute path to the uploaded source file.
- * @param targetFormat The desired output format.
- * @returns            Absolute path to the converted output file.
- *
- * @throws ConversionError            if the external tool exits non-zero.
- * @throws TimeoutError               if conversion exceeds 60 seconds.
- * @throws UnsupportedConversionError if the format pair is not supported.
- */
+async function jpgToPdf(inputPaths: string[], outputPath: string): Promise<void> {
+  const pdfDoc = await PDFDocument.create();
+  for (const p of inputPaths) {
+    const imgBytes = fs.readFileSync(p);
+    let image;
+    if (p.toLowerCase().endsWith('.png')) image = await pdfDoc.embedPng(imgBytes);
+    else image = await pdfDoc.embedJpg(imgBytes);
+    const page = pdfDoc.addPage([image.width, image.height]);
+    page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+  }
+  const pdfBytes = await pdfDoc.save();
+  fs.writeFileSync(outputPath, pdfBytes);
+}
+
 export async function convertFile(
-  inputPath: string,
-  targetFormat: SupportedFormat
+  inputPathOrPaths: string | string[],
+  targetFormat: SupportedFormat | string,
+  operation?: string,
+  options?: { degrees?: number; pages?: string; password?: string }
 ): Promise<string> {
-  const sourceFormat = detectFormat(inputPath);
+  if (!fs.existsSync(OUTPUTS_DIR)) fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
+
+  const isBatch = Array.isArray(inputPathOrPaths);
+  const inputPaths = isBatch ? (inputPathOrPaths as string[]) : [inputPathOrPaths as string];
+  const firstInput = inputPaths[0];
+  const sourceFormat = detectFormat(firstInput);
+  
   const outputId = uuidv4();
   const outputFileName = `${outputId}.${targetFormat}`;
-  const outputPath = path.join(OUTPUTS_DIR, outputFileName);
+  let outputPath = path.join(OUTPUTS_DIR, outputFileName);
 
-  // Ensure output directory exists
-  if (!fs.existsSync(OUTPUTS_DIR)) {
-    fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
+  if (operation === 'merge-pdf' || operation === 'jpg-to-pdf' || (isBatch && targetFormat === 'pdf')) {
+    if (sourceFormat === 'jpg' || sourceFormat === 'png') await jpgToPdf(inputPaths, outputPath);
+    else await mergePdf(inputPaths, outputPath);
+    scheduleCleanup(outputPath);
+    return outputPath;
   }
 
-  // ── PDF → JPG (via pdf2pic) ──────────────────────────────────────────────
-  if (sourceFormat === 'pdf' && PDF2PIC_TARGETS.has(targetFormat)) {
-    await convertPdfToJpg(inputPath, outputPath);
+  if (operation === 'split-pdf') {
+    await splitPdf(firstInput, outputPath);
+    outputPath = outputPath.replace(/\.[^.]+$/, '.zip');
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
 
-    // pdf2pic may have produced a .jpg or .zip depending on page count
+  if (operation === 'rotate-pdf') {
+    await rotatePdf(firstInput, outputPath, options);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (operation === 'watermark-pdf') {
+    await watermarkPdf(firstInput, outputPath);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (operation === 'compress-pdf') {
+    await runCommand('gs', ['-sDEVICE=pdfwrite', '-dCompatibilityLevel=1.4', '-dPDFSETTINGS=/screen', '-dNOPAUSE', '-dQUIET', '-dBATCH', `-sOutputFile=${outputPath}`, firstInput]);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (operation === 'protect-pdf') {
+    const password = options?.password || 'password';
+    await runCommand('qpdf', [
+      '--encrypt',
+      `--user-password=${password}`,
+      `--owner-password=${password}`,
+      '--bits=256',
+      '--',
+      firstInput,
+      outputPath
+    ]);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (operation === 'unlock-pdf') {
+    const password = options?.password || '';
+    await runCommand('qpdf', ['--password=' + password, '--decrypt', firstInput, outputPath]);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (operation === 'ocr-pdf') {
+    try {
+      await runCommand('tesseract', [firstInput, outputPath.replace(/\.pdf$/, ''), 'pdf']);
+    } catch (err) {
+      console.warn('Tesseract failed, falling back to copy:', err);
+      fs.copyFileSync(firstInput, outputPath);
+    }
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
+  if (sourceFormat === 'pdf' && PDF2PIC_TARGETS.has(targetFormat)) {
+    await convertPdfToJpg(firstInput, outputPath);
     const jpgPath = outputPath.replace(/\.[^.]+$/, '.jpg');
     const zipPath = outputPath.replace(/\.[^.]+$/, '.zip');
     const actualOutput = fs.existsSync(zipPath) ? zipPath : jpgPath;
-
-    if (!fs.existsSync(actualOutput)) {
-      throw new ConversionError(
-        'PDF to JPG conversion produced no output',
-        -1,
-        ''
-      );
-    }
-
+    if (!fs.existsSync(actualOutput)) throw new ConversionError('PDF to JPG conversion produced no output', -1, '');
     scheduleCleanup(actualOutput);
     return actualOutput;
   }
 
-  // ── PDF → XLSX (deferred — not yet implemented) ──────────────────────────
-  if (sourceFormat === 'pdf' && targetFormat === 'xlsx') {
-    throw new UnsupportedConversionError(sourceFormat, targetFormat);
-  }
-
-  // ── LibreOffice-based conversions ────────────────────────────────────────
   const supportedSources = LIBREOFFICE_MATRIX[targetFormat];
   if (!supportedSources || !supportedSources.has(sourceFormat)) {
     throw new UnsupportedConversionError(sourceFormat, targetFormat);
   }
 
-  await runLibreOffice(inputPath, targetFormat, OUTPUTS_DIR);
-  renameLibreOfficeOutput(inputPath, targetFormat, outputPath);
+  await runLibreOffice(firstInput, targetFormat, OUTPUTS_DIR);
+  renameLibreOfficeOutput(firstInput, targetFormat, outputPath);
 
   if (!fs.existsSync(outputPath)) {
-    throw new ConversionError(
-      'Conversion completed but output file is missing',
-      0,
-      ''
-    );
+    throw new ConversionError('Conversion completed but output file is missing', 0, '');
   }
 
   scheduleCleanup(outputPath);

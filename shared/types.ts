@@ -1,6 +1,6 @@
 export type ConversionStatus = "pending" | "processing" | "done" | "error";
 
-export type SupportedFormat = "pdf" | "docx" | "pptx" | "xlsx" | "jpg" | "png";
+export type SupportedFormat = "pdf" | "docx" | "pptx" | "xlsx" | "jpg" | "png" | "zip";
 
 export interface ConversionJob {
   id: string;

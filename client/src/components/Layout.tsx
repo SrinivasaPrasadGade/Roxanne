@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Outlet, Link } from 'react-router-dom';
-import { CheckCircle2, XCircle, X } from 'lucide-react';
+import { CheckCircle2, XCircle, X, Github, Mail } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export interface ToastItem {
@@ -71,9 +71,15 @@ export default function Layout() {
             {/* <Link to="/" className="hover:text-white transition-colors">PROCESS</Link> */}
             {/* <Link to="/" className="hover:text-white transition-colors">TOOLS</Link> */}
             {/* <Link to="/" className="hover:text-white transition-colors">ETHOS</Link> */}
-            <button className="px-6 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full text-white transition-all backdrop-blur-sm">
-              TOOLS
-            </button>
+            <a
+              href="https://github.com/SrinivasaPrasadGade/Roxanne"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-6 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full text-white transition-all backdrop-blur-sm flex items-center gap-2"
+            >
+              <Github className="w-4 h-4" />
+              
+            </a>
           </nav>
         </div>
       </header>
@@ -87,13 +93,15 @@ export default function Layout() {
       <footer className="mt-auto py-8 border-t border-white/10 bg-black/80 backdrop-blur-lg">
         <div className="max-w-7xl mx-auto px-6 text-xs tracking-widest text-white/50 flex flex-col md:flex-row items-center justify-between gap-4 uppercase">
           <div className="flex items-center gap-6">
-            <span className="hover:text-white cursor-pointer transition-colors">CONNECT</span>
-            <span className="hover:text-white cursor-pointer transition-colors">X</span>
-            <span className="hover:text-white cursor-pointer transition-colors">IN</span>
+            <span className="text-white/50"></span>
+            <a href="https://www.linkedin.com/in/srinivasa-prasad-gade" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">LINKEDIN</a>
           </div>
           <p className="opacity-60 text-[10px]">LEGAL / © {new Date().getFullYear()} ROXANNE</p>
           <div className="flex items-center gap-4">
-            <span className="hover:text-white cursor-pointer transition-colors border-b border-white/20 pb-0.5">JOIN THE CURATION</span>
+            <span className="hover:text-white cursor-pointer transition-colors border-b border-white/20 pb-0.5"></span>
+            <a href="mailto:srinivasaprasad.gade@gmail.com" className="hover:text-white transition-colors" title="Email">
+              <Mail className="w-4 h-4" />
+            </a>
             {/* Server Connection Status Indicator */}
             <div className="flex items-center ml-4 opacity-50" title={`Server: ${serverStatus}`}>
               <span

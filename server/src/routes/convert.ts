@@ -30,6 +30,7 @@ const SUPPORTED_FORMATS: Set<string> = new Set([
   'xlsx',
   'jpg',
   'png',
+  'zip',
 ]);
 
 // ── Ensure directories exist ─────────────────────────────────────────────────
@@ -122,9 +123,30 @@ convertRouter.post(
 
       // 3. Convert
       const inputPath = req.file.path;
+      const operation = req.body.operation || '';
+
+      let options: any;
+      if (req.body.options) {
+        try {
+          options = JSON.parse(req.body.options);
+          console.log('[convert route] parsed options from body.options:', JSON.stringify(options));
+        } catch {
+          console.log('[convert route] failed to parse body.options:', req.body.options);
+          // Ignore parse errors
+        }
+      } else if (req.body.degrees !== undefined || req.body.pages !== undefined) {
+        options = {
+          degrees: req.body.degrees ? parseInt(req.body.degrees, 10) : undefined,
+          pages: req.body.pages,
+        };
+      }
+      console.log('[convert route] operation:', operation, 'final options:', JSON.stringify(options));
+
       const outputPath = await convertFile(
         inputPath,
-        targetFormat as SupportedFormat
+        targetFormat as SupportedFormat,
+        operation,
+        options
       );
 
       // 4. Build job record
@@ -212,6 +234,81 @@ convertRouter.post(
           err instanceof Error ? err.message : 'Internal server error';
         res.status(500).json({ error: message, code: 'SERVER_ERROR' });
       }
+    }
+  }
+);
+
+// ── POST /api/convert-batch ──────────────────────────────────────────────────
+
+convertRouter.post(
+  '/api/convert-batch',
+  convertLimiter,
+  upload.array('files', 10),
+  async (req: Request, res: Response): Promise<void> => {
+    const startTime = Date.now();
+    let targetFormat = '';
+
+    try {
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        res.status(400).json({ error: 'No files uploaded', code: 'MISSING_FILE' });
+        return;
+      }
+
+      targetFormat = (req.body.targetFormat || '').toLowerCase().trim();
+      if (!targetFormat || !SUPPORTED_FORMATS.has(targetFormat)) {
+        res.status(400).json({ error: 'Invalid or missing target format', code: 'INVALID_FORMAT' });
+        return;
+      }
+
+      const inputPaths = files.map((f) => f.path);
+      const operation = req.body.operation || '';
+      const outputPath = await convertFile(
+        inputPaths.length === 1 ? inputPaths[0] : (inputPaths as any),
+        targetFormat as SupportedFormat,
+        operation
+      );
+
+      const jobId = uuidv4();
+      const outputFilename = path.basename(outputPath);
+      const outputStats = fs.statSync(outputPath);
+
+      const job: InternalJob = {
+        id: jobId,
+        status: 'done',
+        inputFile: 'batch',
+        outputFile: outputFilename,
+        outputPath,
+        originalName: `merged.${targetFormat}`,
+        createdAt: new Date().toISOString(),
+      };
+      jobsStore.set(jobId, job);
+
+      inputPaths.forEach((p) => {
+        try { fs.unlinkSync(p); } catch {}
+      });
+
+      logConversion({
+        timestamp: new Date().toISOString(),
+        inputFormat: 'batch',
+        outputFormat: targetFormat,
+        fileSize: files.reduce((acc, f) => acc + f.size, 0),
+        durationMs: Date.now() - startTime,
+        success: true,
+      });
+
+      res.status(200).json({
+        jobId,
+        downloadUrl: `/api/download/${jobId}`,
+        filename: job.originalName,
+        size: outputStats.size,
+      });
+    } catch (err: unknown) {
+      const files = req.files as Express.Multer.File[];
+      if (files) {
+        files.forEach((f) => { try { fs.unlinkSync(f.path); } catch {} });
+      }
+      res.status(500).json({ error: err instanceof Error ? err.message : 'Batch conversion failed', code: 'SERVER_ERROR' });
     }
   }
 );

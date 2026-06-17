@@ -19,8 +19,8 @@ import DownloadButton from './DownloadButton';
  * - Done:       green checkmark + DownloadButton
  * - Error:      red X + error message + "Retry" button
  */
-export default function ConversionStatus() {
-  const { queue, retryItem } = useConversionStore();
+export default function ConversionStatus({ queue, onRetry }: { queue: ConversionQueueItem[], onRetry?: (item: ConversionQueueItem) => void }) {
+  const { retryItem } = useConversionStore();
 
   if (queue.length === 0) return null;
 
@@ -36,7 +36,7 @@ export default function ConversionStatus() {
             layout
             className="border border-white/10 rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-colors relative overflow-hidden"
           >
-            <StatusRow item={item} onRetry={retryItem} />
+            <StatusRow item={item} onRetry={() => onRetry ? onRetry(item) : retryItem(item.queueId)} />
           </motion.div>
         ))}
       </AnimatePresence>
@@ -51,7 +51,7 @@ function StatusRow({
   onRetry,
 }: {
   item: ConversionQueueItem;
-  onRetry: (queueId: string) => void;
+  onRetry: () => void;
 }) {
   const { queueId, file, targetFormat, status, uploadProgress, conversionProgress } = item;
 
@@ -118,7 +118,7 @@ function StatusRow({
           </div>
           <button
             type="button"
-            onClick={() => onRetry(queueId)}
+            onClick={onRetry}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-widest font-bold bg-white/10 border border-white/20 text-white/80 hover:bg-white/20 hover:text-white transition-all active:scale-[0.95] focus:outline-none"
           >
             <RefreshCw className="w-3 h-3" />

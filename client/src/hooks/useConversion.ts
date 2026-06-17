@@ -31,7 +31,9 @@ export function useConversion() {
     async (
       queueId: string,
       file: File,
-      targetFormat: SupportedFormat
+      targetFormat: SupportedFormat,
+      operation?: string,
+      options?: any
     ): Promise<ConversionResponse> => {
       const source = axios.CancelToken.source();
       cancelRef.current = source;
@@ -45,8 +47,10 @@ export function useConversion() {
       });
 
       const formData = new FormData();
-      formData.append('file', file);
       formData.append('targetFormat', targetFormat);
+      if (operation) formData.append('operation', operation);
+      if (options) formData.append('options', JSON.stringify(options));
+      formData.append('file', file);
 
       const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -130,5 +134,92 @@ export function useConversion() {
     cancelRef.current?.cancel('User cancelled conversion');
   }, []);
 
-  return { convert, cancel };
+  const convertBatch = useCallback(
+    async (
+      queueIds: string[],
+      files: File[],
+      targetFormat: SupportedFormat,
+      operation?: string
+    ): Promise<ConversionResponse> => {
+      const source = axios.CancelToken.source();
+      cancelRef.current = source;
+
+      queueIds.forEach((id) =>
+        updateItem(id, { status: 'uploading', uploadProgress: 0, conversionProgress: 0, error: undefined })
+      );
+
+      const formData = new FormData();
+      formData.append('targetFormat', targetFormat);
+      if (operation) formData.append('operation', operation);
+      files.forEach((file) => formData.append('files', file));
+
+      const API_BASE = import.meta.env.VITE_API_URL || '';
+
+      try {
+        const response = await axios.post<ConversionResponse>(
+          `${API_BASE}/api/convert-batch`,
+          formData,
+          {
+            cancelToken: source.token,
+            onUploadProgress: (progressEvent) => {
+              const total = progressEvent.total ?? files.reduce((acc, f) => acc + f.size, 0);
+              const percent = Math.round((progressEvent.loaded / total) * 100);
+              
+              queueIds.forEach((id) => updateItem(id, { uploadProgress: percent }));
+
+              if (percent >= 100) {
+                queueIds.forEach((id) => updateItem(id, { status: 'converting', uploadProgress: 100 }));
+
+                let fakeProgress = 0;
+                fakeTimerRef.current = setInterval(() => {
+                  fakeProgress = Math.min(fakeProgress + Math.random() * 8, 80);
+                  queueIds.forEach((id) => updateItem(id, { conversionProgress: Math.round(fakeProgress) }));
+                }, 300);
+              }
+            },
+          }
+        );
+
+        stopFakeProgress();
+
+        // The batch API returns ONE job ID and ONE output file.
+        // We will assign this output to the FIRST queue item, and mark the others as done (but hidden or just show success).
+        // Actually, let's just mark the first one with the download button.
+        queueIds.forEach((id, idx) => {
+          if (idx === 0) {
+            updateItem(id, {
+              status: 'done',
+              conversionProgress: 100,
+              jobId: response.data.jobId,
+              downloadUrl: response.data.downloadUrl,
+              outputFilename: response.data.filename,
+              outputSize: response.data.size,
+            });
+          } else {
+            updateItem(id, {
+              status: 'done',
+              conversionProgress: 100,
+            });
+          }
+        });
+
+        return response.data;
+      } catch (err: unknown) {
+        stopFakeProgress();
+        let errorMessage = 'Conversion failed';
+        if (axios.isAxiosError(err) && err.response?.data) {
+          const data = err.response.data as { error?: string };
+          errorMessage = data.error || err.message;
+        } else if (err instanceof Error) {
+          errorMessage = err.message;
+        }
+
+        queueIds.forEach((id) => updateItem(id, { status: 'error', error: errorMessage }));
+        throw new Error(errorMessage, { cause: err });
+      }
+    },
+    [updateItem]
+  );
+
+  return { convert, convertBatch, cancel };
 }

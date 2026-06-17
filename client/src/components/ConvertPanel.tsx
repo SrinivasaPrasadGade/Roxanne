@@ -1,10 +1,12 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { ArrowRightLeft, Loader2, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useParams } from 'react-router-dom';
 import type { SupportedFormat, ConversionResult } from '../../../shared/types';
 import { useConversionStore } from '../stores/conversionStore';
 import { useConversion } from '../hooks/useConversion';
 import ConversionStatus from './ConversionStatus';
+import { getToolBySlug, type ToolConfig } from '../data/tools';
 
 // ── Format mapping by MIME type ─────────────────────────────────────────────
 
@@ -70,17 +72,22 @@ export default function ConvertPanel({ files, onConversionComplete }: ConvertPan
   // Per-file target format selections: file index → target format
   const [formatSelections, setFormatSelections] = useState<Record<number, SupportedFormat>>({});
   const [isConverting, setIsConverting] = useState(false);
+  const { slug } = useParams<{ slug: string }>();
+  const currentTool = getToolBySlug(slug ?? '');
   const { addToQueue, queue } = useConversionStore();
-  const { convert } = useConversion();
+  const { convert, convertBatch } = useConversion();
   const resultsRef = useRef<ConversionResult[]>([]);
 
   const getSelectedFormat = useCallback(
     (index: number, file: File): SupportedFormat => {
       if (formatSelections[index]) return formatSelections[index];
+      if (currentTool?.category === 'convert') {
+        return currentTool.outputFormat;
+      }
       const options = getFormatsForFile(file);
       return options[0]?.value ?? 'pdf';
     },
-    [formatSelections]
+    [formatSelections, currentTool]
   );
 
   const handleFormatChange = useCallback((index: number, format: SupportedFormat) => {
@@ -97,34 +104,25 @@ export default function ConvertPanel({ files, onConversionComplete }: ConvertPan
     setIsConverting(true);
     resultsRef.current = [];
 
-    // Build queue items
-    const items = files.map((file, idx) => ({
-      file,
-      targetFormat: getSelectedFormat(idx, file),
-    }));
+    const isBatchTool = slug === 'merge-pdf' || slug === 'jpg-to-pdf';
 
-    // Add all to the Zustand queue first (so they appear in the status panel)
-    addToQueue(items);
+    if (isBatchTool) {
+      const title = slug === 'merge-pdf' ? 'Merged Document' : 'Combined PDF';
+      const dummyFile = new File([], `${title} (${files.length} files).pdf`);
+      const targetFormat = currentTool?.outputFormat ?? 'pdf';
+      
+      addToQueue([{ file: dummyFile, targetFormat, toolSlug: slug, batchFiles: files }]);
+      await new Promise((r) => setTimeout(r, 50));
+      
+      const currentQueue = useConversionStore.getState().queue;
+      const queueItem = currentQueue[currentQueue.length - 1];
 
-    // Wait a tick so the store updates and we can read the queueIds
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Grab the newly-added queue IDs (they are the last N items)
-    const currentQueue = useConversionStore.getState().queue;
-    const newItems = currentQueue.slice(-items.length);
-
-    // Process sequentially
-    for (let i = 0; i < newItems.length; i++) {
-      const queueItem = newItems[i];
       try {
-        const response = await convert(
-          queueItem.queueId,
-          queueItem.file,
-          queueItem.targetFormat
-        );
+        const response = await convertBatch([queueItem.queueId], files, targetFormat, slug);
+
         resultsRef.current.push({
-          fileName: queueItem.file.name,
-          targetFormat: queueItem.targetFormat,
+          fileName: title,
+          targetFormat: targetFormat,
           status: 'success',
           jobId: response.jobId,
           downloadUrl: response.downloadUrl,
@@ -132,28 +130,107 @@ export default function ConvertPanel({ files, onConversionComplete }: ConvertPan
           outputSize: response.size,
         });
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : 'Unknown error';
+        const message = err instanceof Error ? err.message : 'Batch conversion failed';
         resultsRef.current.push({
-          fileName: queueItem.file.name,
-          targetFormat: queueItem.targetFormat,
+          fileName: title,
+          targetFormat: targetFormat,
           status: 'error',
           error: message,
         });
+      }
+    } else {
+      const items = files.map((file, idx) => ({
+        file,
+        targetFormat: currentTool?.category === 'convert' ? getSelectedFormat(idx, file) : (currentTool?.outputFormat ?? 'pdf'),
+        toolSlug: slug,
+      }));
+
+      addToQueue(items);
+      await new Promise((r) => setTimeout(r, 50));
+
+      const currentQueue = useConversionStore.getState().queue;
+      const newItems = currentQueue.slice(-items.length);
+
+      for (let i = 0; i < newItems.length; i++) {
+        const queueItem = newItems[i];
+        try {
+          const response = await convert(
+            queueItem.queueId,
+            queueItem.file,
+            queueItem.targetFormat,
+            slug
+          );
+          resultsRef.current.push({
+            fileName: queueItem.file.name,
+            targetFormat: queueItem.targetFormat,
+            status: 'success',
+            jobId: response.jobId,
+            downloadUrl: response.downloadUrl,
+            outputFilename: response.filename,
+            outputSize: response.size,
+          });
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Unknown error';
+          resultsRef.current.push({
+            fileName: queueItem.file.name,
+            targetFormat: queueItem.targetFormat,
+            status: 'error',
+            error: message,
+          });
+        }
       }
     }
 
     setIsConverting(false);
     onConversionComplete(resultsRef.current);
-  }, [files, isConverting, getSelectedFormat, addToQueue, convert, onConversionComplete]);
+  }, [files, isConverting, getSelectedFormat, addToQueue, convert, convertBatch, slug, currentTool, onConversionComplete]);
 
-  const activeCount = queue.filter(
+  const handleRetryItem = useCallback(
+    async (item: import('../stores/conversionStore').ConversionQueueItem) => {
+      // 1. Reset state to pending in store
+      useConversionStore.getState().retryItem(item.queueId);
+      
+      // 2. Re-trigger conversion without replacing original `files` reference
+      try {
+        if (item.batchFiles) {
+          await convertBatch([item.queueId], item.batchFiles, item.targetFormat, item.toolSlug);
+        } else {
+          await convert(item.queueId, item.file, item.targetFormat, item.toolSlug);
+        }
+      } catch (err) {
+        // Errors are already handled inside `convert`/`convertBatch` and saved to store.
+      }
+    },
+    [convert, convertBatch]
+  );
+
+  const toolQueue = queue.filter((q) => q.toolSlug === slug);
+
+  const activeCount = toolQueue.filter(
     (q) => q.status === 'uploading' || q.status === 'converting'
   ).length;
+
+  const actionVerbs = useMemo(() => {
+    if (!currentTool) return { base: 'Process', progressive: 'Processing' };
+    if (currentTool.category === 'convert') return { base: 'Convert', progressive: 'Converting' };
+    
+    const firstWord = currentTool.name.split(' ')[0];
+    switch (firstWord) {
+      case 'Merge': return { base: 'Merge', progressive: 'Merging' };
+      case 'Split': return { base: 'Split', progressive: 'Splitting' };
+      case 'Compress': return { base: 'Compress', progressive: 'Compressing' };
+      case 'Rotate': return { base: 'Rotate', progressive: 'Rotating' };
+      case 'OCR': return { base: 'OCR', progressive: 'Running OCR on' };
+      case 'Watermark': return { base: 'Watermark', progressive: 'Watermarking' };
+      case 'Protect': return { base: 'Protect', progressive: 'Protecting' };
+      default: return { base: firstWord, progressive: `${firstWord}ing` };
+    }
+  }, [currentTool]);
 
   return (
     <div className="flex flex-col gap-6">
       {/* Per-file format selectors */}
-      {files.length > 0 && (
+      {files.length > 0 && currentTool?.category === 'convert' && (
         <div className="flex flex-col gap-3">
           <h4 className="text-xs tracking-widest uppercase font-semibold text-white/80">
             Target Formats
@@ -241,12 +318,12 @@ export default function ConvertPanel({ files, onConversionComplete }: ConvertPan
         {isConverting ? (
           <>
             <Loader2 className="w-4.5 h-4.5 animate-spin" />
-            Converting {activeCount > 0 ? `(${activeCount} active)` : '…'}
+            {actionVerbs.progressive} {activeCount > 0 ? `(${activeCount} active)` : '…'}
           </>
         ) : (
           <>
             <ArrowRightLeft className="w-4.5 h-4.5" />
-            Convert{' '}
+            {actionVerbs.base}{' '}
             {files.length > 0
               ? `${files.length} Document${files.length > 1 ? 's' : ''}`
               : 'Documents'}
@@ -255,15 +332,15 @@ export default function ConvertPanel({ files, onConversionComplete }: ConvertPan
       </button>
 
       {/* Live conversion status feed */}
-      {queue.length > 0 && (
+      {toolQueue.length > 0 && (
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h4 className="text-xs tracking-widest uppercase font-semibold text-white/80">Conversion Progress</h4>
             <span className="text-[10px] tracking-widest uppercase font-semibold text-white/50 bg-white/10 px-2 py-0.5 rounded-full">
-              {queue.length} item{queue.length !== 1 ? 's' : ''}
+              {toolQueue.length} item{toolQueue.length !== 1 ? 's' : ''}
             </span>
           </div>
-          <ConversionStatus />
+          <ConversionStatus queue={toolQueue} onRetry={handleRetryItem} />
         </div>
       )}
     </div>

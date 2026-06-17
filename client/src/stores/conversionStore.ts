@@ -24,13 +24,17 @@ export interface ConversionQueueItem {
   outputSize?: number;
   /** Error message if conversion failed */
   error?: string;
+  /** Slug of the tool that initiated this conversion */
+  toolSlug?: string;
+  /** Original files for batch conversions */
+  batchFiles?: File[];
 }
 
 interface ConversionStore {
   queue: ConversionQueueItem[];
 
   /** Add files to the queue with their individual target formats */
-  addToQueue: (items: { file: File; targetFormat: SupportedFormat }[]) => void;
+  addToQueue: (items: { file: File; targetFormat: SupportedFormat; toolSlug?: string; batchFiles?: File[] }[]) => void;
   /** Update a queue item by its queueId */
   updateItem: (queueId: string, updates: Partial<ConversionQueueItem>) => void;
   /** Remove a specific item from the queue */
@@ -50,10 +54,12 @@ export const useConversionStore = create<ConversionStore>((set) => ({
     set((state) => ({
       queue: [
         ...state.queue,
-        ...items.map(({ file, targetFormat }) => ({
+        ...items.map(({ file, targetFormat, toolSlug, batchFiles }) => ({
           queueId: uuidv4(),
           file,
           targetFormat,
+          toolSlug,
+          batchFiles,
           status: 'pending' as const,
           uploadProgress: 0,
           conversionProgress: 0,

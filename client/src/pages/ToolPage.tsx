@@ -4,6 +4,11 @@ import * as LucideIcons from 'lucide-react';
 import { getToolBySlug } from '../data/tools';
 import type { SupportedFormat } from '../../../shared/types';
 import UploadWorkspace from '../components/UploadWorkspace';
+import SplitPdfWorkspace from '../components/SplitPdfWorkspace';
+import RotatePdfWorkspace from '../components/RotatePdfWorkspace';
+import WatermarkPdfWorkspace from '../components/WatermarkPdfWorkspace';
+import ProtectPdfWorkspace from '../components/ProtectPdfWorkspace';
+import UnlockPdfWorkspace from '../components/UnlockPdfWorkspace';
 
 function ToolIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (LucideIcons as Record<string, React.ComponentType<{ className?: string }>>)[name];
@@ -112,12 +117,49 @@ export default function ToolPage() {
       </div>
 
       {/* Upload Workspace */}
-      <UploadWorkspace
-        acceptFormats={acceptFormats}
-        toolName={`Upload & ${tool.name}`}
-        toolDescription={`Drop your files below to ${tool.description.toLowerCase()}.`}
-        acceptLabel={acceptLabel}
-      />
+      {tool.slug === 'split-pdf' ? (
+        <SplitPdfWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your PDF below to split it by page number.`}
+          acceptLabel={acceptLabel}
+        />
+      ) : tool.slug === 'rotate-pdf' ? (
+        <RotatePdfWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your PDF below to rotate its pages.`}
+          acceptLabel={acceptLabel}
+        />
+      ) : tool.slug === 'watermark-pdf' ? (
+        <WatermarkPdfWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your PDF below to add text or image watermarks.`}
+          acceptLabel={acceptLabel}
+        />
+      ) : tool.slug === 'protect-pdf' ? (
+        <ProtectPdfWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your PDF below to protect it with a custom password.`}
+          acceptLabel={acceptLabel}
+        />
+      ) : tool.slug === 'unlock-pdf' ? (
+        <UnlockPdfWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your password-protected PDF below to remove the password.`}
+          acceptLabel={acceptLabel}
+        />
+      ) : (
+        <UploadWorkspace
+          acceptFormats={acceptFormats}
+          toolName={`Upload & ${tool.name}`}
+          toolDescription={`Drop your files below to ${tool.description.toLowerCase()}.`}
+          acceptLabel={acceptLabel}
+        />
+      )}
     </div>
   );
 }

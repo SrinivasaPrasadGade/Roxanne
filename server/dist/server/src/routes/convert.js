@@ -22,6 +22,7 @@ const SUPPORTED_FORMATS = new Set([
     'xlsx',
     'jpg',
     'png',
+    'zip',
 ]);
 // ── Ensure directories exist ─────────────────────────────────────────────────
 if (!fs_1.default.existsSync(UPLOADS_DIR)) {
@@ -87,7 +88,23 @@ exports.convertRouter.post('/api/convert', convertLimiter, upload.single('file')
         }
         // 3. Convert
         const inputPath = req.file.path;
-        const outputPath = await (0, conversion_1.convertFile)(inputPath, targetFormat);
+        const operation = req.body.operation || '';
+        let options;
+        if (req.body.options) {
+            try {
+                options = JSON.parse(req.body.options);
+            }
+            catch {
+                // Ignore parse errors
+            }
+        }
+        else if (req.body.degrees !== undefined || req.body.pages !== undefined) {
+            options = {
+                degrees: req.body.degrees ? parseInt(req.body.degrees, 10) : undefined,
+                pages: req.body.pages,
+            };
+        }
+        const outputPath = await (0, conversion_1.convertFile)(inputPath, targetFormat, operation, options);
         // 4. Build job record
         const jobId = (0, uuid_1.v4)();
         const outputFilename = path_1.default.basename(outputPath);
@@ -170,6 +187,69 @@ exports.convertRouter.post('/api/convert', convertLimiter, upload.single('file')
             const message = err instanceof Error ? err.message : 'Internal server error';
             res.status(500).json({ error: message, code: 'SERVER_ERROR' });
         }
+    }
+});
+// ── POST /api/convert-batch ──────────────────────────────────────────────────
+exports.convertRouter.post('/api/convert-batch', convertLimiter, upload.array('files', 10), async (req, res) => {
+    const startTime = Date.now();
+    let targetFormat = '';
+    try {
+        const files = req.files;
+        if (!files || files.length === 0) {
+            res.status(400).json({ error: 'No files uploaded', code: 'MISSING_FILE' });
+            return;
+        }
+        targetFormat = (req.body.targetFormat || '').toLowerCase().trim();
+        if (!targetFormat || !SUPPORTED_FORMATS.has(targetFormat)) {
+            res.status(400).json({ error: 'Invalid or missing target format', code: 'INVALID_FORMAT' });
+            return;
+        }
+        const inputPaths = files.map((f) => f.path);
+        const operation = req.body.operation || '';
+        const outputPath = await (0, conversion_1.convertFile)(inputPaths.length === 1 ? inputPaths[0] : inputPaths, targetFormat, operation);
+        const jobId = (0, uuid_1.v4)();
+        const outputFilename = path_1.default.basename(outputPath);
+        const outputStats = fs_1.default.statSync(outputPath);
+        const job = {
+            id: jobId,
+            status: 'done',
+            inputFile: 'batch',
+            outputFile: outputFilename,
+            outputPath,
+            originalName: `merged.${targetFormat}`,
+            createdAt: new Date().toISOString(),
+        };
+        jobsStore.set(jobId, job);
+        inputPaths.forEach((p) => {
+            try {
+                fs_1.default.unlinkSync(p);
+            }
+            catch { }
+        });
+        (0, conversion_1.logConversion)({
+            timestamp: new Date().toISOString(),
+            inputFormat: 'batch',
+            outputFormat: targetFormat,
+            fileSize: files.reduce((acc, f) => acc + f.size, 0),
+            durationMs: Date.now() - startTime,
+            success: true,
+        });
+        res.status(200).json({
+            jobId,
+            downloadUrl: `/api/download/${jobId}`,
+            filename: job.originalName,
+            size: outputStats.size,
+        });
+    }
+    catch (err) {
+        const files = req.files;
+        if (files) {
+            files.forEach((f) => { try {
+                fs_1.default.unlinkSync(f.path);
+            }
+            catch { } });
+        }
+        res.status(500).json({ error: err instanceof Error ? err.message : 'Batch conversion failed', code: 'SERVER_ERROR' });
     }
 });
 // ── GET /api/download/:jobId ─────────────────────────────────────────────────

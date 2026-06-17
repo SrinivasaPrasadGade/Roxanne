@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as LucideIcons from 'lucide-react';
 import { TOOLS, CATEGORIES, type ToolConfig } from '../data/tools';
+import CircularToolMenu from '../components/CircularToolMenu';
 
 
 function ToolIcon({ name, className }: { name: string; className?: string }) {
@@ -80,79 +81,8 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Tools Grid */}
-      <motion.div
-        layout
-        className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
-      >
-        <AnimatePresence mode="popLayout">
-          {filteredTools.map((tool) => (
-            <motion.div
-              key={tool.slug}
-              variants={cardVariants}
-              initial="hidden"
-              animate="show"
-              exit="exit"
-              layout
-              onClick={() => {
-                if (!tool.comingSoon) navigate(`/tools/${tool.slug}`);
-              }}
-              className={`group relative glass-card rounded-2xl p-6 flex flex-col gap-4 overflow-hidden ${
-                tool.comingSoon
-                  ? 'opacity-40 cursor-default'
-                  : 'cursor-pointer hover:-translate-y-1'
-              }`}
-            >
-              {/* Hover gradient effect inside card */}
-              <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
-
-              {/* Coming Soon Badge */}
-              {tool.comingSoon && (
-                <span className="absolute top-4 right-4 text-[9px] font-bold tracking-widest uppercase text-white/40 bg-white/5 border border-white/10 px-2 py-1 rounded-full">
-                  Coming Soon
-                </span>
-              )}
-
-              {/* Icon */}
-              <div
-                className={`w-12 h-12 rounded-xl ${tool.iconBg} border border-white/10 shadow-inner flex items-center justify-center shrink-0 transition-all duration-300 ${
-                  !tool.comingSoon ? 'group-hover:scale-110 group-hover:shadow-[0_0_15px_rgba(255,255,255,0.2)]' : ''
-                }`}
-              >
-                <ToolIcon
-                  name={tool.icon}
-                  className={`w-5 h-5 ${tool.iconColor}`}
-                />
-              </div>
-
-              {/* Text */}
-              <div className="relative z-10">
-                <h3
-                  className={`text-[15px] font-medium tracking-wide leading-snug ${
-                    tool.comingSoon ? 'text-white/50' : 'text-white/90'
-                  }`}
-                >
-                  {tool.name}
-                </h3>
-                <p
-                  className={`text-xs mt-2 leading-relaxed font-light ${
-                    tool.comingSoon ? 'text-white/30' : 'text-white/50'
-                  }`}
-                >
-                  {tool.description}
-                </p>
-              </div>
-
-              {/* Arrow indicator on hover */}
-              {!tool.comingSoon && (
-                <div className="absolute right-5 bottom-5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <LucideIcons.ArrowUpRight className="w-5 h-5 text-white/50" />
-                </div>
-              )}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </motion.div>
+      {/* Tools Circular Menu */}
+      <CircularToolMenu tools={filteredTools} />
     </div>
   );
 }
