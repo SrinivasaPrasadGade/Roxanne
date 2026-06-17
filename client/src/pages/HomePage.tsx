@@ -42,11 +42,10 @@ export default function HomePage() {
       {/* Hero Section */}
       <div className="text-center mb-16 relative">
         <h4 className="text-white/50 text-xs tracking-[0.3em] font-medium uppercase mb-4">
-          Every Doc You Make
+          The POLICE brings you
         </h4>
         <h1 className="text-4xl sm:text-5xl md:text-6xl font-serif font-light text-white uppercase tracking-wider leading-[1.1]">
-          Uncompromising Roxanne /<br />
-          <span className="font-serif">Redefining Document Tools</span>
+          <i>Every Doc You Make</i>
         </h1>
         <p className="mt-6 text-sm sm:text-base text-white/50 max-w-2xl mx-auto font-light tracking-wide">
           Roxanne
