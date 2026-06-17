@@ -1,0 +1,15 @@
+{
+  "name": "roxanne",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Production-ready document converter application",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
+    "build": "pnpm --filter server build && pnpm --filter client build",
+    "start": "pnpm --filter server start",
+    "clean": "rm -rf node_modules client/node_modules server/node_modules"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

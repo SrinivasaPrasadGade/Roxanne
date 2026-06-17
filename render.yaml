@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: roxanne-backend
+    env: docker
+    dockerfilePath: ./server/Dockerfile
+    envVars:
+      - key: PORT
+        value: "3001"
+      - key: ALLOWED_ORIGINS
+        value: "https://your-vercel-frontend.vercel.app" # UPDATE THIS with your actual Vercel URL
+      - key: MAX_FILE_SIZE_MB
+        value: "50"

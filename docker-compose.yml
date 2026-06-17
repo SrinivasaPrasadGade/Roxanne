@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - ALLOWED_ORIGINS=http://localhost:5173
+      - MAX_FILE_SIZE_MB=50
+    volumes:
+      - tmp-uploads:/tmp/uploads
+      - tmp-outputs:/tmp/outputs
+    restart: always
+
+  client:
+    build:
+      context: .
+      dockerfile: client/Dockerfile
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+    restart: always
+
+volumes:
+  tmp-uploads:
+  tmp-outputs:

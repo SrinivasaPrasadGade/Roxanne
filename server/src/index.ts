@@ -1,0 +1,64 @@
+import express, { Request, Response, NextFunction } from 'express';
+import cors from 'cors';
+import fs from 'fs';
+import dotenv from 'dotenv';
+import { convertRouter } from './routes/convert';
+
+// Load environment variables
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
+
+// Create temp directories
+const UPLOADS_DIR = '/tmp/uploads';
+const OUTPUTS_DIR = '/tmp/outputs';
+
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+if (!fs.existsSync(OUTPUTS_DIR)) {
+  fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
+}
+
+// Setup CORS
+app.use(cors({
+  origin: ALLOWED_ORIGINS.split(','),
+  credentials: true
+}));
+
+app.use(express.json());
+
+// Health endpoint
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// Mount conversion routes
+app.use(convertRouter);
+
+// Global error handler — always returns JSON { error, code }
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  console.error('Unhandled server error:', err);
+
+  // Handle multer file-size errors that bubble up
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({
+      error: 'File exceeds the maximum allowed size',
+      code: 'FILE_TOO_LARGE',
+    });
+    return;
+  }
+
+  res.status(500).json({
+    error: err.message || 'Internal server error',
+    code: 'SERVER_ERROR',
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`Roxanne backend running on http://localhost:${PORT}`);
+  console.log(`Uploads directory: ${UPLOADS_DIR}`);
+  console.log(`Outputs directory: ${OUTPUTS_DIR}`);
+});
