@@ -1,21 +1,16 @@
 FROM node:20-bullseye-slim
 
-# Install MINIMAL LibreOffice (core + writer only), Ghostscript, GraphicsMagick, and fonts
-# Using --no-install-recommends to drastically reduce image size and memory footprint
-# Note: qpdf is NOT needed — PDF encrypt/decrypt uses pure JS libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice-core \
-    libreoffice-writer \
-    libreoffice-calc \
-    libreoffice-impress \
-    libreoffice-java-common \
+# Install full LibreOffice suite, Ghostscript, GraphicsMagick, JRE, and fonts
+# Since we are deploying to Hugging Face with 16GB RAM, we do not need to restrict the installation size.
+RUN apt-get update && apt-get install -y \
+    libreoffice \
     default-jre-headless \
     ghostscript \
     graphicsmagick \
     curl \
-    fonts-liberation \
-    fonts-dejavu-core \
     fontconfig \
+    fonts-liberation \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -f -v
 
