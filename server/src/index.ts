@@ -40,6 +40,7 @@ console.warn = (...args: any[]) => {
 };
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 7860;
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
 
