@@ -5,6 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import archiver from 'archiver';
 import sharp from 'sharp';
 import { PDFDocument, rgb, degrees } from 'pdf-lib';
+import { encryptPDF } from '@pdfsmaller/pdf-encrypt';
+import { decryptPDF } from '@pdfsmaller/pdf-decrypt';
 import type { SupportedFormat } from '../../../shared/types';
 import {
   ConversionError,
@@ -387,22 +389,20 @@ export async function convertFile(
 
   if (operation === 'protect-pdf') {
     const password = options?.password || 'password';
-    await runCommand('qpdf', [
-      '--encrypt',
-      password,
-      password,
-      '256',
-      '--',
-      firstInput,
-      outputPath
-    ]);
+    console.log(`[protect-pdf] Encrypting PDF with pure JS library`);
+    const inputBytes = fs.readFileSync(firstInput);
+    const encryptedBytes = await encryptPDF(new Uint8Array(inputBytes), password, { ownerPassword: password, algorithm: 'AES-256' });
+    fs.writeFileSync(outputPath, encryptedBytes);
     scheduleCleanup(outputPath);
     return outputPath;
   }
 
   if (operation === 'unlock-pdf') {
     const password = options?.password || '';
-    await runCommand('qpdf', ['--password=' + password, '--decrypt', firstInput, outputPath]);
+    console.log(`[unlock-pdf] Decrypting PDF with pure JS library`);
+    const inputBytes = fs.readFileSync(firstInput);
+    const decryptedBytes = await decryptPDF(new Uint8Array(inputBytes), password);
+    fs.writeFileSync(outputPath, decryptedBytes);
     scheduleCleanup(outputPath);
     return outputPath;
   }

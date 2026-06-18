@@ -1,7 +1,8 @@
 FROM node:20-bullseye-slim
 
-# Install MINIMAL LibreOffice (core + writer only), Ghostscript, GraphicsMagick, qpdf, and fonts
+# Install MINIMAL LibreOffice (core + writer only), Ghostscript, GraphicsMagick, and fonts
 # Using --no-install-recommends to drastically reduce image size and memory footprint
+# Note: qpdf is NOT needed — PDF encrypt/decrypt uses pure JS libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-core \
     libreoffice-writer \
@@ -10,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     graphicsmagick \
     curl \
-    qpdf \
     fonts-liberation \
     fonts-dejavu-core \
     fontconfig \
