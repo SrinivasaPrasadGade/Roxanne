@@ -7,6 +7,38 @@ import { convertRouter } from './routes/convert';
 // Load environment variables
 dotenv.config();
 
+// Simple in-memory log buffer for remote debugging
+const logBuffer: string[] = [];
+const maxLogLines = 1000;
+
+function appendToBuffer(type: string, args: any[]) {
+  const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+  const logLine = `[${new Date().toISOString()}] [${type}] ${message}`;
+  logBuffer.push(logLine);
+  if (logBuffer.length > maxLogLines) {
+    logBuffer.shift();
+  }
+}
+
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+
+console.log = (...args: any[]) => {
+  appendToBuffer('INFO', args);
+  originalLog.apply(console, args);
+};
+
+console.error = (...args: any[]) => {
+  appendToBuffer('ERROR', args);
+  originalError.apply(console, args);
+};
+
+console.warn = (...args: any[]) => {
+  appendToBuffer('WARN', args);
+  originalWarn.apply(console, args);
+};
+
 const app = express();
 const PORT = process.env.PORT || 7860;
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
@@ -38,6 +70,12 @@ app.get('/', (_req: Request, res: Response) => {
 // Health endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: '1.0.0' });
+});
+
+// Debug logs endpoint
+app.get('/api/debug-logs', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/plain');
+  res.send(logBuffer.join('\n'));
 });
 
 // Mount conversion routes
