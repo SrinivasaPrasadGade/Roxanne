@@ -30,6 +30,11 @@ app.use(cors({
 
 app.use(express.json());
 
+// Root endpoint
+app.get('/', (_req: Request, res: Response) => {
+  res.send('<h1>Roxanne API Server</h1><p>Status: Running</p><p>Use /api/health to check status.</p>');
+});
+
 // Health endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: '1.0.0' });
