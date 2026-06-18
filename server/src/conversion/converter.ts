@@ -120,12 +120,9 @@ function runLibreOffice(inputPath: string, targetFormat: string, outDir: string)
   const args = [
     `-env:UserInstallation=file://${profileDir}`,
     '--headless',
-    '--invisible',
-    '--nocrashreport',
-    '--nodefault',
-    '--nologo',
     '--norestore',
     '--nofirststartwizard',
+    '--nologo',
     '--nolockcheck',
     '--convert-to',
     convertFormat,
