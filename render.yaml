@@ -2,7 +2,7 @@ services:
   - type: web
     name: roxanne-backend
     env: docker
-    dockerfilePath: ./server/Dockerfile
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: PORT
         value: "3001"

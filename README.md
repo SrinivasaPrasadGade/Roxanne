@@ -1,3 +1,13 @@
+---
+title: Roxanne-backend
+emoji: 🚀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Roxanne
 
 Roxanne is a production-ready document converter application designed to handle robust conversions using Node.js + Express, React (Vite) + TypeScript, Multer, LibreOffice CLI, and `pdf-lib`.
