@@ -159,9 +159,9 @@ function runLibreOffice(inputPath: string, targetFormat: string, outDir: string)
   let infilter: string | undefined;
 
   if (inputPath.toLowerCase().endsWith('.pdf')) {
-    if (targetFormat === 'docx') { convertFormat = 'docx:"MS Word 2007 XML"'; infilter = 'writer_pdf_import'; }
-    else if (targetFormat === 'pptx') { convertFormat = 'pptx:"Impress MS PowerPoint 2007 XML"'; infilter = 'impress_pdf_import'; }
-    else if (targetFormat === 'xlsx') { convertFormat = 'xlsx:"Calc MS Excel 2007 XML"'; infilter = 'calc_pdf_import'; }
+    if (targetFormat === 'docx') { convertFormat = 'docx'; }
+    else if (targetFormat === 'pptx') { convertFormat = 'pptx'; }
+    else if (targetFormat === 'xlsx') { convertFormat = 'xlsx'; }
   }
 
   const profileDir = path.join('/tmp', `lo_profile_${uuidv4()}`);
