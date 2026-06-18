@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install pdf2docx \
+    && pip3 install "pdf2docx" "PyMuPDF==1.24.2" \
     && fc-cache -f -v
 
 WORKDIR /app
