@@ -42,7 +42,15 @@ function scheduleCleanup(filePath: string): void {
   }, OUTPUT_TTL_MS).unref();
 }
 
-function runCommand(cmd: string, args: string[], options?: { timeoutMs?: number; env?: Record<string, string> }): Promise<void> {
+function runCommand(
+  cmd: string, 
+  args: string[], 
+  options?: { 
+    timeoutMs?: number; 
+    env?: Record<string, string>; 
+    checkOutputFile?: string;
+  }
+): Promise<void> {
   const timeoutMs = options?.timeoutMs || DEFAULT_TIMEOUT_MS;
   
   return new Promise((resolve, reject) => {
@@ -62,8 +70,43 @@ function runCommand(cmd: string, args: string[], options?: { timeoutMs?: number;
       env: { ...process.env, ...options?.env },
     });
     
+    // Check if output file gets created and stabilizes (useful if process hangs on exit)
+    let checkTimer: ReturnType<typeof setInterval> | undefined;
+    if (options?.checkOutputFile) {
+      const checkPath = options.checkOutputFile;
+      let lastSize = -1;
+      let stableCount = 0;
+      
+      checkTimer = setInterval(() => {
+        try {
+          if (fs.existsSync(checkPath)) {
+            const stats = fs.statSync(checkPath);
+            if (stats.size > 0) {
+              if (stats.size === lastSize) {
+                stableCount++;
+              } else {
+                lastSize = stats.size;
+                stableCount = 0;
+              }
+              
+              if (stableCount >= 2) { // Stable size for 2 seconds
+                console.log(`[runCommand] Output file ${path.basename(checkPath)} is ready and stable (${stats.size} bytes). Resolving early.`);
+                if (checkTimer) clearInterval(checkTimer);
+                try { proc.kill('SIGTERM'); } catch {}
+                setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} }, 1000);
+                settle(() => resolve());
+              }
+            }
+          }
+        } catch (err) {
+          // ignore
+        }
+      }, 1000);
+    }
+    
     // Hard-kill timer: if the process doesn't exit after timeout, SIGKILL it
     const timer = setTimeout(() => {
+      if (checkTimer) clearInterval(checkTimer);
       console.error(`[Timeout] ${cmd} exceeded ${timeoutMs}ms. Killing process. Stderr so far: ${stderr.slice(0, 500)}`);
       try { proc.kill('SIGTERM'); } catch {}
       // Give 5s for graceful exit, then SIGKILL
@@ -83,20 +126,25 @@ function runCommand(cmd: string, args: string[], options?: { timeoutMs?: number;
 
     proc.on('error', (err) => {
       clearTimeout(timer);
+      if (checkTimer) clearInterval(checkTimer);
       console.error(`[runCommand] Error spawning ${cmd}: ${err.message}`);
       settle(() => reject(new ConversionError(`Failed to start ${cmd}: ${err.message}`, -1, stderr)));
     });
 
     proc.on('exit', (code, signal) => {
       clearTimeout(timer);
+      if (checkTimer) clearInterval(checkTimer);
       const elapsed = Date.now() - startTime;
       console.log(`[runCommand] ${cmd} exited with code=${code} signal=${signal} in ${elapsed}ms`);
       if (stdout) console.log(`[runCommand] stdout: ${stdout.slice(0, 500)}`);
       if (stderr) console.log(`[runCommand] stderr: ${stderr.slice(0, 500)}`);
       
       if (code !== 0 && code !== null) {
+        // If we settled early, don't reject
+        if (settled) return;
         settle(() => reject(new ConversionError(`${cmd} exited with code ${code}`, code, stderr)));
       } else if (signal) {
+        if (settled) return;
         settle(() => reject(new ConversionError(`${cmd} killed by signal ${signal}`, -1, stderr)));
       } else {
         settle(() => resolve());
@@ -135,14 +183,23 @@ function runLibreOffice(inputPath: string, targetFormat: string, outDir: string)
 
   // Use SAL_USE_VCLPLUGIN=svp to avoid any X11/display dependency
   // Set HOME=/tmp so LibreOffice doesn't try to write to /root
+  // Set DBUS_SESSION_BUS_ADDRESS=/dev/null to avoid dbus hangs
   const loEnv: Record<string, string> = {
     SAL_USE_VCLPLUGIN: 'svp',
     HOME: '/tmp',
+    DBUS_SESSION_BUS_ADDRESS: '/dev/null',
   };
+
+  const expectedName = `${path.basename(inputPath, path.extname(inputPath))}.${targetFormat}`;
+  const checkPath = path.join(outDir, expectedName);
 
   console.log(`[LibreOffice] Converting ${path.basename(inputPath)} -> ${targetFormat} (profile: ${profileDir})`);
 
-  return runCommand(soffice, args, { timeoutMs: LIBREOFFICE_TIMEOUT_MS, env: loEnv }).finally(() => {
+  return runCommand(soffice, args, { 
+    timeoutMs: LIBREOFFICE_TIMEOUT_MS, 
+    env: loEnv,
+    checkOutputFile: checkPath
+  }).finally(() => {
     // Cleanup isolated user profile
     try {
       if (fs.existsSync(profileDir)) {
