@@ -13,7 +13,8 @@ import {
 } from './errors';
 
 const OUTPUTS_DIR = '/tmp/outputs';
-const CONVERSION_TIMEOUT_MS = 180_000; // 3 minutes
+const DEFAULT_TIMEOUT_MS = 120_000; // 2 minutes for general commands
+const LIBREOFFICE_TIMEOUT_MS = 150_000; // 2.5 minutes for LibreOffice
 const OUTPUT_TTL_MS = 60 * 60 * 1000;
 
 const LIBREOFFICE_MATRIX: Record<string, Set<string>> = {
@@ -39,20 +40,39 @@ function scheduleCleanup(filePath: string): void {
   }, OUTPUT_TTL_MS).unref();
 }
 
-function runCommand(cmd: string, args: string[]): Promise<void> {
+function runCommand(cmd: string, args: string[], options?: { timeoutMs?: number; env?: Record<string, string> }): Promise<void> {
+  const timeoutMs = options?.timeoutMs || DEFAULT_TIMEOUT_MS;
+  
   return new Promise((resolve, reject) => {
     let stderr = '';
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      controller.abort();
-      console.error(`[Timeout] Command ${cmd} timed out after ${CONVERSION_TIMEOUT_MS}ms. Stderr:`, stderr);
-      reject(new TimeoutError(CONVERSION_TIMEOUT_MS));
-    }, CONVERSION_TIMEOUT_MS);
+    let stdout = '';
+    let settled = false;
 
-    const proc = spawn(cmd, args, { signal: controller.signal, stdio: ['ignore', 'pipe', 'pipe'] });
+    const settle = (fn: () => void) => {
+      if (!settled) { settled = true; fn(); }
+    };
+
+    console.log(`[runCommand] Starting: ${cmd} ${args.join(' ')}`);
+    const startTime = Date.now();
+
+    const proc = spawn(cmd, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...options?.env },
+    });
     
+    // Hard-kill timer: if the process doesn't exit after timeout, SIGKILL it
+    const timer = setTimeout(() => {
+      console.error(`[Timeout] ${cmd} exceeded ${timeoutMs}ms. Killing process. Stderr so far: ${stderr.slice(0, 500)}`);
+      try { proc.kill('SIGTERM'); } catch {}
+      // Give 5s for graceful exit, then SIGKILL
+      setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+      }, 5000);
+      settle(() => reject(new TimeoutError(timeoutMs)));
+    }, timeoutMs);
+
     if (proc.stdout) {
-      proc.stdout.on('data', () => {}); // Consume stdout
+      proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
     }
     
     if (proc.stderr) {
@@ -61,14 +81,24 @@ function runCommand(cmd: string, args: string[]): Promise<void> {
 
     proc.on('error', (err) => {
       clearTimeout(timer);
-      if (err.name === 'AbortError') return;
-      reject(new ConversionError(`Failed to start ${cmd}: ${err.message}`, -1, stderr));
+      console.error(`[runCommand] Error spawning ${cmd}: ${err.message}`);
+      settle(() => reject(new ConversionError(`Failed to start ${cmd}: ${err.message}`, -1, stderr)));
     });
 
-    proc.on('exit', (code) => {
+    proc.on('exit', (code, signal) => {
       clearTimeout(timer);
-      if (code !== 0) reject(new ConversionError(`${cmd} exited with code ${code}`, code ?? -1, stderr));
-      else resolve();
+      const elapsed = Date.now() - startTime;
+      console.log(`[runCommand] ${cmd} exited with code=${code} signal=${signal} in ${elapsed}ms`);
+      if (stdout) console.log(`[runCommand] stdout: ${stdout.slice(0, 500)}`);
+      if (stderr) console.log(`[runCommand] stderr: ${stderr.slice(0, 500)}`);
+      
+      if (code !== 0 && code !== null) {
+        settle(() => reject(new ConversionError(`${cmd} exited with code ${code}`, code, stderr)));
+      } else if (signal) {
+        settle(() => reject(new ConversionError(`${cmd} killed by signal ${signal}`, -1, stderr)));
+      } else {
+        settle(() => resolve());
+      }
     });
   });
 }
@@ -79,18 +109,22 @@ function runLibreOffice(inputPath: string, targetFormat: string, outDir: string)
   let infilter: string | undefined;
 
   if (inputPath.toLowerCase().endsWith('.pdf')) {
-    if (targetFormat === 'docx') { convertFormat = 'docx:MS Word 2007 XML'; infilter = 'writer_pdf_import'; }
-    else if (targetFormat === 'pptx') { convertFormat = 'pptx:Impress MS PowerPoint 2007 XML'; infilter = 'impress_pdf_import'; }
-    else if (targetFormat === 'xlsx') { convertFormat = 'xlsx:Calc MS Excel 2007 XML'; infilter = 'calc_pdf_import'; }
+    if (targetFormat === 'docx') { convertFormat = 'docx:"MS Word 2007 XML"'; infilter = 'writer_pdf_import'; }
+    else if (targetFormat === 'pptx') { convertFormat = 'pptx:"Impress MS PowerPoint 2007 XML"'; infilter = 'impress_pdf_import'; }
+    else if (targetFormat === 'xlsx') { convertFormat = 'xlsx:"Calc MS Excel 2007 XML"'; infilter = 'calc_pdf_import'; }
   }
 
   const profileDir = path.join('/tmp', `lo_profile_${uuidv4()}`);
   const args = [
     `-env:UserInstallation=file://${profileDir}`,
     '--headless',
+    '--invisible',
+    '--nocrashreport',
+    '--nodefault',
     '--nologo',
     '--norestore',
     '--nofirststartwizard',
+    '--nolockcheck',
     '--convert-to',
     convertFormat,
     '--outdir',
@@ -100,7 +134,16 @@ function runLibreOffice(inputPath: string, targetFormat: string, outDir: string)
   if (infilter) args.push('--infilter=' + infilter);
   args.push(inputPath);
 
-  return runCommand(soffice, args).finally(() => {
+  // Use SAL_USE_VCLPLUGIN=svp to avoid any X11/display dependency
+  // Set HOME=/tmp so LibreOffice doesn't try to write to /root
+  const loEnv: Record<string, string> = {
+    SAL_USE_VCLPLUGIN: 'svp',
+    HOME: '/tmp',
+  };
+
+  console.log(`[LibreOffice] Converting ${path.basename(inputPath)} -> ${targetFormat} (profile: ${profileDir})`);
+
+  return runCommand(soffice, args, { timeoutMs: LIBREOFFICE_TIMEOUT_MS, env: loEnv }).finally(() => {
     // Cleanup isolated user profile
     try {
       if (fs.existsSync(profileDir)) {
