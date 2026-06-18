@@ -11,7 +11,10 @@ RUN apt-get update && apt-get install -y \
     fontconfig \
     fonts-liberation \
     fonts-dejavu \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/* \
+    && pip3 install pdf2docx \
     && fc-cache -f -v
 
 WORKDIR /app

@@ -482,6 +482,12 @@ export async function convertFile(
     return actualOutput;
   }
 
+  if (sourceFormat === 'pdf' && targetFormat === 'docx') {
+    await runCommand('pdf2docx', ['convert', firstInput, outputPath]);
+    scheduleCleanup(outputPath);
+    return outputPath;
+  }
+
   const supportedSources = LIBREOFFICE_MATRIX[targetFormat];
   if (!supportedSources || !supportedSources.has(sourceFormat)) {
     throw new UnsupportedConversionError(sourceFormat, targetFormat);
