@@ -40,8 +40,8 @@ RUN mkdir -p /tmp/lo_warmup && \
     rm -rf /tmp/lo_warmup
 
 # Expose port and configure environment
-EXPOSE 3001
-ENV PORT=3001
+EXPOSE 7860
+ENV PORT=7860
 ENV NODE_ENV=production
 ENV HOME=/tmp
 
