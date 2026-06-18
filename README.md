@@ -1,6 +1,6 @@
 # Roxanne
 
-**Every Doc You Make** — A production-ready document conversion and PDF manipulation suite with a glassmorphism dark UI and server-side heavy processing.
+A production-ready document conversion and PDF manipulation suite and server-side heavy processing.
 
 Live App: [roxannee.vercel.app](https://roxannee.vercel.app) &nbsp;|&nbsp; Repository: [github.com/SrinivasaPrasadGade/Roxanne](https://github.com/SrinivasaPrasadGade/Roxanne)
 
