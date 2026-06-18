@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as LucideIcons from 'lucide-react';
 import { type ToolConfig } from '../data/tools';
+import { useAuthStore } from '../stores/authStore';
 
 function ToolIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (LucideIcons as Record<string, React.ComponentType<{ className?: string }>>)[name];
@@ -12,6 +13,7 @@ function ToolIcon({ name, className }: { name: string; className?: string }) {
 
 export default function CircularToolMenu({ tools }: { tools: ToolConfig[] }) {
   const navigate = useNavigate();
+  const { isAuthenticated, setAuthModalOpen } = useAuthStore();
   const [hoveredTool, setHoveredTool] = useState<ToolConfig | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -201,7 +203,11 @@ export default function CircularToolMenu({ tools }: { tools: ToolConfig[] }) {
       if (tool) {
         if (!tool.comingSoon) {
           if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
-          navigate(`/tools/${tool.slug}`);
+          if (isAuthenticated) {
+            navigate(`/tools/${tool.slug}`);
+          } else {
+            setAuthModalOpen(true);
+          }
         }
         setHoveredTool(null);
         hoveredToolRef.current = null;
@@ -314,7 +320,11 @@ export default function CircularToolMenu({ tools }: { tools: ToolConfig[] }) {
                   onClick={() => {
                     if (!tool.comingSoon) {
                       if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
-                      navigate(`/tools/${tool.slug}`);
+                      if (isAuthenticated) {
+                        navigate(`/tools/${tool.slug}`);
+                      } else {
+                        setAuthModalOpen(true);
+                      }
                     }
                   }}
                   className={`relative group rounded-xl sm:rounded-2xl w-full h-full flex items-center justify-center transition-all duration-300 ${

@@ -9,6 +9,7 @@ import RotatePdfWorkspace from '../components/RotatePdfWorkspace';
 import WatermarkPdfWorkspace from '../components/WatermarkPdfWorkspace';
 import ProtectPdfWorkspace from '../components/ProtectPdfWorkspace';
 import UnlockPdfWorkspace from '../components/UnlockPdfWorkspace';
+import { useAuthStore } from '../stores/authStore';
 
 function ToolIcon({ name, className }: { name: string; className?: string }) {
   const Icon = (LucideIcons as Record<string, React.ComponentType<{ className?: string }>>)[name];
@@ -57,6 +58,7 @@ function buildAcceptLabel(formats: SupportedFormat[]): string {
 export default function ToolPage() {
   const { slug } = useParams<{ slug: string }>();
   const tool = slug ? getToolBySlug(slug) : undefined;
+  const { isAuthenticated, setAuthModalOpen } = useAuthStore();
 
   if (!tool) {
     return (
@@ -75,6 +77,36 @@ export default function ToolPage() {
           <LucideIcons.ArrowLeft className="w-4 h-4" />
           Back to all tools
         </Link>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="max-w-5xl mx-auto px-4 py-20 text-center relative z-10 flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="w-20 h-20 rounded-3xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 shadow-2xl relative overflow-hidden backdrop-blur-md animate-pulse">
+          <LucideIcons.Lock className="w-9 h-9 text-white/60" />
+        </div>
+        <h1 className="text-2xl font-serif text-white mb-2 tracking-widest uppercase">Access Restricted</h1>
+        <p className="text-white/50 mb-8 max-w-sm text-sm font-light leading-relaxed">
+          The tool "<code className="text-white bg-white/10 px-1.5 py-0.5 rounded font-mono text-xs">{tool.name}</code>" requires you to be signed in to utilize its processing features.
+        </p>
+        <div className="flex flex-col sm:flex-row items-center gap-4">
+          <button
+            onClick={() => setAuthModalOpen(true)}
+            className="inline-flex items-center gap-2 px-8 py-3 rounded-full bg-white text-black hover:bg-white/95 text-xs font-bold tracking-widest uppercase transition-all shadow-lg hover:shadow-[0_0_20px_rgba(255,255,255,0.4)]"
+          >
+            <LucideIcons.UserPlus className="w-4 h-4" />
+            SIGN IN / SIGN UP
+          </button>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium text-xs tracking-widest uppercase transition-all"
+          >
+            <LucideIcons.ArrowLeft className="w-4 h-4" />
+            Back to tools
+          </Link>
+        </div>
       </div>
     );
   }

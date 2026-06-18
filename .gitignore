@@ -1,1 +1,9 @@
 node_modules
+.env
+.env.local
+client/.env
+client/.env.local
+dist/
+dummy.docx
+dummy.pdf
+test file.docx
